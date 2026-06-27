@@ -1,0 +1,6 @@
+extract_faces: false
+max_frames_per_video: 12
+face_size: 224
+jpeg_quality: 90
+workers: 1
+debug_n: null
