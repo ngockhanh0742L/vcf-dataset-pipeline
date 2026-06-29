@@ -1,0 +1,69 @@
+data:
+  raw_video_dir: data/raw_videos
+  processed_face_dir: data/processed_faces
+  sequence_dir: data/sequences
+  manifest_path: data/manifests/sequence_manifest.csv
+  split_manifest_path: data/manifests/split_manifest.csv
+
+pipeline:
+  candidate_fps: 15.0
+  model_fps: 7.5
+  seq_len: 24
+  window_hop_train: 6
+  window_hop_realtime: 4
+  image_size: 300
+  max_sequences_per_video: 6
+  min_source_fps_warning: 15.0
+  use_timestamp_sampling: true
+
+face:
+  detector: retinaface_or_mediapipe
+  align: true
+  output_channels: 3
+  output_color_order: RGB
+  select_largest_face: true
+  min_face_box_ratio: 0.08
+  missing_face_policy_train: repair_then_mark
+  missing_face_policy_realtime: last_valid_face
+
+quality:
+  blur_metric: variance_of_laplacian
+  min_blur: 60.0
+  min_brightness: 35.0
+  max_brightness: 225.0
+  min_contrast: 10.0
+  hard_reject_if_no_face: true
+
+motion:
+  ssim_redundant_threshold: 0.995
+  min_motion_score: 0.005
+  compare_against: last_selected_model_frame
+
+model:
+  backbone: EfficientNetB3
+  input_size: 300
+  weights: imagenet
+  include_top: false
+  pooling: avg
+  temporal_layer: BiLSTM
+  lstm_units: 256
+  dropout: 0.3
+  classifier_activation: sigmoid
+  input_value_range: [0, 255]
+
+training:
+  batch_size: 4
+  epochs: 20
+  optimizer: Adam
+  learning_rate: 0.0001
+  loss: binary_crossentropy
+  monitor_metric: val_auc
+  early_stopping_patience: 5
+  save_best_only: true
+
+realtime:
+  smoothing_k: 5
+  fake_threshold: 0.70
+  real_threshold: 0.30
+  output_labels: [REAL, FAKE, UNCERTAIN]
+  warmup_until_buffer_full: true
