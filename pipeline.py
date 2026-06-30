@@ -18,40 +18,7 @@ def run_preprocess(config, logger):
     videos = list_videos(config.data.raw_video_dir)
     logger.info(f"Found {len(videos)} videos.")
     
-    # Pre-assign split for each video group to prevent target leakage (GroupShuffleSplit style)
-    import random
-    from collections import defaultdict
-    
-    stem_to_videos = defaultdict(list)
-    for v in videos:
-        base = os.path.basename(v)
-        # Group by the prefix (usually the hash in VCF filenames) to group all variants together
-        group_id = base.split('_')[0] if '_' in base else os.path.splitext(base)[0]
-        stem_to_videos[group_id].append(v)
-        
-    unique_groups = list(stem_to_videos.keys())
-    random.seed(42)
-    random.shuffle(unique_groups)
-    
-    # 80% train, 10% val, 10% test split
-    n_groups = len(unique_groups)
-    n_train = int(n_groups * 0.8)
-    n_val = int(n_groups * 0.1)
-    
-    train_groups = set(unique_groups[:n_train])
-    val_groups = set(unique_groups[n_train:n_train+n_val])
-    
-    video_to_split = {}
-    for group_id, group_vids in stem_to_videos.items():
-        if group_id in train_groups:
-            split_name = 'train'
-        elif group_id in val_groups:
-            split_name = 'val'
-        else:
-            split_name = 'test'
-        for v in group_vids:
-            video_to_split[v] = split_name
-            
+
     for video in videos:
         logger.info(f"Processing {video}...")
         try:
@@ -69,7 +36,7 @@ def run_preprocess(config, logger):
             real_keywords = {"targets", "target", "real", "original", "authentic"}
             label = 0 if any(any(kw in part for kw in real_keywords) for part in parts) else 1
             
-            split = video_to_split.get(video, 'train')
+            split = 'train' # simple default
             
             write_sequences_and_manifest(sequences, rel_video_path, label, split, config.data, config.pipeline)
             logger.info(f"Generated {len(sequences)} sequences for {video}.")
