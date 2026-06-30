@@ -1,94 +1,170 @@
-# VCF Dataset Pipeline: Deepfake Detection Data Preparation Framework
+# Multi-dataset Face Sequence Pipeline
 
-## 1. Abstract and System Overview
+This project converts labeled videos into leakage-safe face sequences and a
+framework-neutral manifest. VCF is supported directly; other datasets can be
+added through a small CSV manifest without changing pipeline code.
 
-This repository provides a highly optimized Extract, Transform, Load (ETL) pipeline exclusively designed for **Deepfake Detection Dataset Preparation**. It transforms raw video datasets into high-quality, motion-aware face sequences tailored for training advanced spatiotemporal neural network architectures (like EfficientNet-B3 + BiLSTM, 3D-CNNs, etc.).
+## Environment
 
-Unlike naive frame extraction pipelines, this framework employs a rigorous frame-selection algorithm based on structural similarity (SSIM) and Laplacian variance. This ensures that any deep learning model trained on this dataset learns from dynamic, high-fidelity facial movements rather than static or blurry artifacts. Furthermore, all intermediate face cropping operations are performed entirely in memory (RAM), vastly accelerating processing speeds by minimizing disk I/O bottlenecks.
+```powershell
+conda env create -f environment.yml
+conda activate mediapipe_env
+```
 
-## 2. System Architecture and Data Flow
+All paths in `config.yaml` are resolved relative to that config file, so the
+commands do not depend on the current working directory.
 
-The preprocessing pipeline acts as a sophisticated filter funnel, transforming raw `.mp4` videos into tightly structured `24-frame` sequence tensors. The internal flow is defined as follows:
+## Configure input datasets
 
-### 2.1. Temporal Sampling (`src/sampler.py`)
-- **Timestamp-Based Extraction**: Videos are read using OpenCV. Instead of extracting all frames blindly, the system samples frames based on precise timestamp intervals.
-- **Candidate vs. Model FPS**: The pipeline samples a dense pool of "Candidate Frames" at `candidate_fps = 15.0`. Later, the sequence builder sub-samples these down to the target `model_fps = 7.5`. This provides a temporal buffer, allowing the system to shift selections slightly if a target frame is heavily blurred or missing a face.
+VCF uses its native layout:
 
-### 2.2. Face Detection and Alignment (`src/face_processor.py`)
-- **Engine**: Utilizes **MediaPipe Face Detection** (BlazeFace backend) operating in `min_detection_confidence=0.5` mode.
-- **Cropping & Sizing**: Faces are detected, and a bounding box is established. A **30% margin** (factor of 1.3) is added to include the entire head structure (chin, forehead, and edges of the face) which is crucial for identifying artifact boundaries in Deepfakes.
-- The crop is subsequently resized to `300x300` (RGB) to standardize the input resolution.
+```yaml
+datasets:
+  - id: vcf
+    adapter: vcf
+    root: data/vcf
+    strict_layout: true
+```
 
-### 2.3. Quality Assessment (`src/quality.py`)
-- Uses the **Variance of the Laplacian** operator on the grayscale representation of the cropped face.
-- Frames returning a variance below `filter.blur_threshold` are flagged as invalid (too blurry) and excluded from the selection pool.
-
-### 2.4. Sequence Building & Motion Analysis (`src/sequence_builder.py` & `src/motion.py`)
-- **Sliding Window**: Extracts sequences of exactly `seq_len = 24` frames, utilizing a `window_hop` to define the overlap between consecutive sequences.
-- **SSIM Motion Filtering**: Calculates the Structural Similarity Index (SSIM) between consecutive selected frames. A low standard deviation in SSIM indicates a frozen/static video (often an artifact of poor deepfakes or dead data). Sequences failing `filter.motion_std_threshold` are discarded.
-- **Repair Policy**: If an occlusion occurs and a face is missing for a single frame, the system intelligently duplicates the nearest valid frame. Sequences exceeding the `max_missing_faces` threshold are permanently discarded to maintain data integrity.
-
-## 3. Directory Structure
+Accepted VCF layouts are:
 
 ```text
-vcf-dataset-pipeline/
-├── config.yaml             # Core configuration (Hyperparameters, IO Paths)
-├── pipeline.py             # Main CLI Entry Point
-├── data/
-│   ├── raw_videos/         # Source input directories (e.g., /real, /fake MP4s)
-│   ├── sequences/          # Generated dataset tensors (300x300 JPEG sequences)
-│   └── manifests/          # sequence_manifest.csv (Ground truth & metadata)
-└── src/
-    ├── config.py           # YAML parser and validator
-    ├── face_processor.py   # MediaPipe face extraction
-    ├── manifest.py         # CSV Logger & Writer
-    ├── motion.py           # SSIM algorithms
-    ├── quality.py          # Laplacian algorithms
-    ├── sampler.py          # Timestamp interpolation
-    ├── selector.py         # Sequence ranking algorithm
-    ├── sequence_builder.py # Tensor assembly and repair policies
-    ├── utils.py            # Logging and path utilities
-    └── video_reader.py     # cv2.VideoCapture wrapper
+{root}/{compression}/{gen_method}/{resolution}/{background}/{video}.mp4
+{root}/{compression}/{gen_method}/{resolution}/{media_type}/{background}/{video}.mp4
+{root}/vcf/{compression}/{gen_method}/{resolution}/{background}/{video}.mp4
 ```
 
-## 4. Dataset Manifest Format
+`targets` is real (`0`); the supported generation methods are fake (`1`).
+All compression/generator/resolution variants sharing background and filename
+receive the same split.
 
-The pipeline outputs `sequence_manifest.csv` which acts as the master ground truth database for your training pipeline. Each row represents a 24-frame sequence:
-- `sequence_id`: Unique UUID for the tensor sequence.
-- `video_id` / `label` / `split`: Source identifier and classification target.
-- `frame_paths`: JSON array pointing to the specific JPEG crops inside the `sequences/` directory.
-- `avg_quality` / `avg_motion` / `repair_ratio`: Granular metadata allowing for dynamic filtering during your own dataloader phase (e.g. via `tf.data.Dataset` or PyTorch `DataLoader`).
+For another dataset, create a CSV with required columns `path`, `label`, and
+`group_id`, then add:
 
-## 5. Execution Commands
+```yaml
+  - id: another_dataset
+    adapter: manifest
+    root: D:/datasets/another_dataset
+    manifest: D:/datasets/another_dataset/videos.csv
+```
 
-The interface is managed via `pipeline.py`. Ensure the `mediapipe_env` conda environment is active.
+`path` may be relative to `root`. `label` must be `0` or `1`. `group_id` must
+identify the original subject/source shared by all derived videos; this is the
+key that prevents train/validation/test leakage. Optional columns are
+`video_id`, `class_name`, `compression`, `gen_method`, `resolution`, `media_type`,
+`background_type`, and `video_name`.
 
-### Run Preprocessing (Dataset Generation)
-Extracts faces, runs filters, builds sequences, and writes to `data/sequences`.
+## Validate and process
+
+First scan paths, labels, config, and split assignment without writing output:
+
+```powershell
+python pipeline.py --validate-only
+```
+
+Then process everything, or one named dataset:
+
+```powershell
+python pipeline.py --log-file output/preprocess.log
+python pipeline.py --dataset vcf
+```
+
+Resume is enabled by default. A video is skipped only when it already has an
+accepted sequence produced with the same pipeline fingerprint. Use
+`--no-resume` to reprocess and upsert, or `--overwrite` for fresh manifests.
+The manifest is checkpointed every 25 attempted videos. `--max-videos 1` is
+available for a quick end-to-end smoke test.
+
+The checked-in profile uses eight workers. On the reference laptop (Intel Core
+Ultra 5 225U, 14 logical processors, 15 GiB RAM), the benchmark was:
+
+| Workers | 8-video time |
+|---:|---:|
+| 1 | 49.3 s |
+| 2 | 32.6 s |
+| 4 | 24.4 s |
+| 6 | 23.8 s |
+| 8 | 21.5 s |
+
+After subtracting dataset discovery, the 9,600-video run is estimated at
+roughly 6.5–8 hours. Laptop temperature, video duration, antivirus scanning,
+and storage speed can move this estimate. Follow progress separately:
+
+```powershell
+Get-Content output/preprocess.log -Wait
+```
+
+Validate every manifest reference and leakage group before upload:
+
+```powershell
+python -m src.validate_output --config config.yaml
+```
+
+The upload check requires non-empty train/validation/test splits and both
+labels in train. Add `--allow-partial` only when checking smoke-test output.
+
+Outputs are deliberately isolated from raw videos:
+
+```text
+output/
+├── sequences/{sequence_id}/frame_00.png ...
+└── manifests/
+    ├── sequence_manifest.csv
+    ├── split_manifest.csv
+    └── dataset_summary.json
+```
+
+PNG is the lossless research default, so preprocessing does not add another
+compression signal to the source dataset. Set `output_format: jpg` with
+`jpeg_quality: 95` for a smaller Kaggle-friendly export.
+
+The default keeps six temporally distributed sequences per video. Based on the
+included smoke test, the current 9,600-video VCF copy is expected to produce
+roughly 144 GiB as PNG. A smaller profile using two JPEG-95 windows per video
+would be roughly 10 GiB. Actual compression varies by content.
+
+The hash folder is a stable `sequence_id`, not a class label. Always read
+`label`, `class_name`, and `split` from `sequence_manifest.csv`; the training
+loader does this automatically. This avoids silently mislabeling a new dataset
+whose directory names follow a different convention.
+
+The reference drive had 212 GiB free before the full run. That is enough for
+the estimated 144 GiB output, but not for an additional same-size temporary
+archive. Use external scratch space or multiple smaller shards for upload.
+
+## Upload to Kaggle
+
+Generate `dataset-metadata.json` only after the output passes validation:
+
+```powershell
+python prepare_kaggle.py --owner YOUR_KAGGLE_NAME --slug face-sequences `
+  --title "Face Sequences" --license other
+kaggle datasets create -p output -r zip
+```
+
+Add `--public` to both commands only after confirming that every source
+dataset's license permits redistribution. Private is the default.
+
+The official Kaggle CLI and credentials must be installed separately.
+
+## Kaggle TensorFlow baseline
+
+Attach the uploaded dataset to a GPU notebook, upload `kaggle_train.py`, and
+run (replace the mounted folder name):
+
 ```bash
-python pipeline.py --mode preprocess
+python kaggle_train.py \
+  --data-root /kaggle/input/face-sequences \
+  --backbone b0 --batch-size 2 --epochs 10
 ```
-*(Note: Since this repository acts strictly as a dataset ETL pipeline, training and evaluation logic are decoupled and left for your downstream ML environment).*
 
-## 6. Configuration & Hyperparameter Tuning Guide
+The baseline reads the provided split, applies class weights, freezes an
+ImageNet EfficientNet backbone, trains a bidirectional LSTM, and saves the best
+model by validation AUC. `--backbone b3` is available but substantially more
+memory-intensive.
 
-The dataset preprocessing can be heavily customized by modifying `config.yaml`. Here are key recommended tuning configurations based on your objectives:
+## Tests
 
-### 6.1. Maximizing Dataset Size (Generating More Sequences)
-If you want to yield more sequences per raw video (useful for mitigating overfitting):
-* **`pipeline.window_hop_train`**: Decrease this value (e.g., from `6` to `3` or `4`). Shorter hop sizes increase the overlap of the sliding windows, yielding more sequences from the same video length.
-* **`pipeline.max_sequences_per_video`**: Increase this limit (e.g., from `6` to `10` or `12`) to allow more window extractions from longer source videos.
-
-### 6.2. Relaxing Filtering Rules (Retaining More Quality-Challenged Videos)
-If too many videos are getting discarded due to recording conditions:
-* **`quality.min_blur`**: Lower this threshold (e.g., from `60.0` to `40.0` or `30.0`) to accept softer, slightly blurrier face crops.
-* **`face.min_face_box_ratio`**: Lower this threshold (e.g., from `0.08` to `0.05`) to allow face extraction when subjects are positioned further from the camera.
-
-### 6.3. Strict Motion Filtering (Excluding Static Frames)
-If you want to ensure the neural network only trains on dynamic expressions (discarding segments where the person is completely still):
-* **`motion.min_motion_score`**: Increase this value (e.g., from `0.005` to `0.01`) to demand higher variation between selected frames.
-* **`motion.ssim_redundant_threshold`**: Decrease this threshold (e.g., from `0.995` to `0.990`) to strictly reject near-identical adjacent frames.
-
-### 6.4. Changing Sequence Length & Frame Frequency
-* **`pipeline.seq_len`**: Adjust the number of frames per sequence (default: `24`). Decrease to `16` to speed up training and save GPU VRAM, or increase to `32` to capture longer temporal context.
-* **`pipeline.model_fps`**: Change the sampling rate. Keeping it at `7.5` means a `24-frame` sequence captures `24 / 7.5 = 3.2` seconds of real-time video. Increasing it captures faster motion dynamics.
+```powershell
+python -m unittest discover -s tests -v
+```

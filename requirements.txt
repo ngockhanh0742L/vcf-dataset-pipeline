@@ -1,10 +1,5 @@
-opencv-python
-numpy
-torch
-albumentations
+numpy<2
+mediapipe==0.10.21
 pandas
-scikit-learn
-tqdm
+scikit-image
 pyyaml
-matplotlib
-seaborn
