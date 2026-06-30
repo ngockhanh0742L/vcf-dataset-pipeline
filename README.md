@@ -69,3 +69,26 @@ Extracts faces, runs filters, builds sequences, and writes to `data/sequences`.
 python pipeline.py --mode preprocess
 ```
 *(Note: Since this repository acts strictly as a dataset ETL pipeline, training and evaluation logic are decoupled and left for your downstream ML environment).*
+
+## 6. Configuration & Hyperparameter Tuning Guide
+
+The dataset preprocessing can be heavily customized by modifying `config.yaml`. Here are key recommended tuning configurations based on your objectives:
+
+### 6.1. Maximizing Dataset Size (Generating More Sequences)
+If you want to yield more sequences per raw video (useful for mitigating overfitting):
+* **`pipeline.window_hop_train`**: Decrease this value (e.g., from `6` to `3` or `4`). Shorter hop sizes increase the overlap of the sliding windows, yielding more sequences from the same video length.
+* **`pipeline.max_sequences_per_video`**: Increase this limit (e.g., from `6` to `10` or `12`) to allow more window extractions from longer source videos.
+
+### 6.2. Relaxing Filtering Rules (Retaining More Quality-Challenged Videos)
+If too many videos are getting discarded due to recording conditions:
+* **`quality.min_blur`**: Lower this threshold (e.g., from `60.0` to `40.0` or `30.0`) to accept softer, slightly blurrier face crops.
+* **`face.min_face_box_ratio`**: Lower this threshold (e.g., from `0.08` to `0.05`) to allow face extraction when subjects are positioned further from the camera.
+
+### 6.3. Strict Motion Filtering (Excluding Static Frames)
+If you want to ensure the neural network only trains on dynamic expressions (discarding segments where the person is completely still):
+* **`motion.min_motion_score`**: Increase this value (e.g., from `0.005` to `0.01`) to demand higher variation between selected frames.
+* **`motion.ssim_redundant_threshold`**: Decrease this threshold (e.g., from `0.995` to `0.990`) to strictly reject near-identical adjacent frames.
+
+### 6.4. Changing Sequence Length & Frame Frequency
+* **`pipeline.seq_len`**: Adjust the number of frames per sequence (default: `24`). Decrease to `16` to speed up training and save GPU VRAM, or increase to `32` to capture longer temporal context.
+* **`pipeline.model_fps`**: Change the sampling rate. Keeping it at `7.5` means a `24-frame` sequence captures `24 / 7.5 = 3.2` seconds of real-time video. Increasing it captures faster motion dynamics.
