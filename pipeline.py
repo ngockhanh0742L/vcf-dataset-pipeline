@@ -2,6 +2,8 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
+from pathlib import Path
+import shutil
 
 from src.config import load_config, pipeline_fingerprint
 from src.utils import setup_logger
@@ -13,6 +15,20 @@ def _write_json_atomic(payload, path):
     with open(temp_path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, ensure_ascii=False)
     os.replace(temp_path, path)
+
+
+def _reset_sequence_output(config):
+    output_root = Path(config.data.output_dir).resolve()
+    sequence_root = Path(config.data.sequence_dir).resolve()
+    try:
+        relative = sequence_root.relative_to(output_root)
+    except ValueError as exc:
+        raise ValueError("sequence_dir must be inside output_dir") from exc
+    if not relative.parts:
+        raise ValueError("Refusing to delete output_dir as sequence_dir")
+    if sequence_root.exists():
+        shutil.rmtree(sequence_root)
+    sequence_root.mkdir(parents=True, exist_ok=True)
 
 
 def _process_video(video, config, logger, fingerprint):
@@ -115,6 +131,7 @@ def run_preprocess(
                 "use --overwrite or choose another data.output_dir"
             )
     if overwrite:
+        _reset_sequence_output(config)
         write_manifest([], config.data.manifest_path, preserve_existing=False)
     resume = bool(getattr(config.data, "resume", True)) if resume is None else resume
     if overwrite:

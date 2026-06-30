@@ -1,5 +1,8 @@
 """Dataset adapter registry producing one canonical video record."""
 
+from collections import defaultdict
+from dataclasses import replace
+import hashlib
 from pathlib import Path
 
 import pandas as pd
@@ -102,6 +105,52 @@ def _discover_manifest(source, config_split):
 ADAPTERS = {"vcf": _discover_vcf, "manifest": _discover_manifest}
 
 
+def _split_counts(size, ratios):
+    exact = [size * ratio for ratio in ratios]
+    counts = [int(value) for value in exact]
+    remaining = size - sum(counts)
+    order = sorted(
+        range(len(ratios)), key=lambda index: (exact[index] - counts[index], -index), reverse=True
+    )
+    for index in order[:remaining]:
+        counts[index] += 1
+    return counts
+
+
+def _assign_balanced_splits(samples, config_split):
+    strategy = getattr(config_split, "strategy", "balanced_hash")
+    if strategy != "balanced_hash":
+        raise ValueError("Only split.strategy=balanced_hash is supported")
+    ratios = (
+        float(config_split.train_ratio),
+        float(config_split.val_ratio),
+        float(config_split.test_ratio),
+    )
+    groups_by_dataset = defaultdict(set)
+    for sample in samples:
+        groups_by_dataset[sample.dataset_id].add(sample.group_id)
+
+    assignments = {}
+    split_names = ("train", "val", "test")
+    for dataset_id, groups in groups_by_dataset.items():
+        ordered = sorted(
+            groups,
+            key=lambda group_id: hashlib.sha256(
+                f"{config_split.seed}:{dataset_id}:{group_id}".encode("utf-8")
+            ).digest(),
+        )
+        counts = _split_counts(len(ordered), ratios)
+        offset = 0
+        for split_name, count in zip(split_names, counts):
+            for group_id in ordered[offset : offset + count]:
+                assignments[(dataset_id, group_id)] = split_name
+            offset += count
+    return [
+        replace(sample, split=assignments[(sample.dataset_id, sample.group_id)])
+        for sample in samples
+    ]
+
+
 def discover_datasets(config, logger, selected_ids=None):
     selected = set(selected_ids or [])
     known = {source.id for source in config.datasets}
@@ -119,6 +168,7 @@ def discover_datasets(config, logger, selected_ids=None):
         samples.extend(discovered)
         rejected.extend(source_rejected)
         logger.info("Dataset '%s': %d valid videos", source.id, len(discovered))
+    samples = _assign_balanced_splits(samples, config.split)
     samples.sort(key=lambda item: (item.dataset_id, item.video_id))
     keys = [(item.dataset_id, item.video_id) for item in samples]
     if len(keys) != len(set(keys)):

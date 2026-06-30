@@ -7,7 +7,8 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 
-from src.datasets import _discover_manifest
+from pipeline import _reset_sequence_output
+from src.datasets import _assign_balanced_splits, _discover_manifest
 from src.face_processor import FaceRecord
 from src.manifest import write_manifest
 from src.quality import compute_quality_score
@@ -139,6 +140,32 @@ class DatasetAdapterTests(unittest.TestCase):
             self.assertEqual(samples[0].group_id, "custom:subject-1")
             self.assertEqual(samples[0].label, 1)
 
+    def test_balanced_split_assigns_exact_group_counts(self):
+        split = namespace(
+            seed=42,
+            strategy="balanced_hash",
+            train_ratio=0.7,
+            val_ratio=0.15,
+            test_ratio=0.15,
+        )
+        samples = []
+        for index in range(20):
+            sample = parse_vcf_video(
+                Path(f"dataset/raw/targets/540x960/bg/{index}.mp4"),
+                Path("dataset"),
+                namespace(
+                    seed=42,
+                    train_ratio=0.7,
+                    val_ratio=0.15,
+                    test_ratio=0.15,
+                    group_by="background_and_video_name",
+                ),
+            )
+            samples.append(sample)
+        balanced = _assign_balanced_splits(samples, split)
+        counts = pd.Series([sample.split for sample in balanced]).value_counts().to_dict()
+        self.assertEqual(counts, {"train": 14, "val": 3, "test": 3})
+
 
 class ManifestTests(unittest.TestCase):
     def test_manifest_upsert_preserves_previous_rows(self):
@@ -164,6 +191,21 @@ class ManifestTests(unittest.TestCase):
 
 
 class OutputValidationTests(unittest.TestCase):
+    def test_overwrite_only_clears_sequence_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            sequences = output / "sequences"
+            sequences.mkdir(parents=True)
+            (sequences / "old.png").write_bytes(b"old")
+            keep = output / "keep.log"
+            keep.write_text("keep", encoding="utf-8")
+            config = namespace(
+                data=namespace(output_dir=str(output), sequence_dir=str(sequences))
+            )
+            _reset_sequence_output(config)
+            self.assertFalse((sequences / "old.png").exists())
+            self.assertTrue(keep.exists())
+
     def test_valid_manifest_and_frames(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

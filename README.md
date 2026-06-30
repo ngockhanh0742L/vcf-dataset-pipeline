@@ -36,7 +36,10 @@ Accepted VCF layouts are:
 
 `targets` is real (`0`); the supported generation methods are fake (`1`).
 All compression/generator/resolution variants sharing background and filename
-receive the same split.
+receive the same split. The balanced-hash strategy assigns the current 160
+source groups exactly as 112 train / 24 validation / 24 test, corresponding to
+6,720 / 1,440 / 1,440 videos. Adding a different `dataset_id` does not reshuffle
+VCF; changing the membership of VCF itself can produce a new balanced split.
 
 For another dataset, create a CSV with required columns `path`, `label`, and
 `group_id`, then add:
