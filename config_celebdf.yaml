@@ -1,0 +1,60 @@
+datasets:
+  - id: celebdf
+    adapter: manifest
+    root: data/celeb-df-v2
+    manifest: data/celeb-df-v2/celebdf_manifest.csv
+    strict_layout: true
+
+data:
+  output_dir: output_celebdf
+  sequence_dir: output_celebdf/sequences
+  manifest_path: output_celebdf/manifests/sequence_manifest.csv
+  split_manifest_path: output_celebdf/manifests/split_manifest.csv
+  summary_path: output_celebdf/manifests/dataset_summary.json
+  fail_on_video_error: true
+  output_format: jpg
+  jpeg_quality: 95
+  resume: true
+
+split:
+  seed: 42
+  strategy: balanced_hash
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+  group_by: background_and_video_name
+
+pipeline:
+  workers: 8
+  candidate_fps: 15.0
+  model_fps: 7.5
+  seq_len: 24
+  window_hop: 6
+  image_size: 300
+  max_sequences_per_video: 6
+  checkpoint_every_videos: 25
+  min_source_fps_warning: 15.0
+  use_timestamp_sampling: true
+
+face:
+  detector: mediapipe
+  model_selection: 1
+  min_detection_confidence: 0.5
+  select_largest_face: true
+  min_face_box_ratio: 0.02
+  crop_margin: 1.3
+  max_consecutive_repairs: 1
+
+quality:
+  enforce_thresholds: false
+  min_blur: 60.0
+  min_brightness: 35.0
+  max_brightness: 225.0
+  min_contrast: 10.0
+
+motion:
+  ssim_redundant_threshold: 0.995
+  min_motion_score: 0.005
+  max_duplicate_ratio: 0.25
+  max_repair_ratio: 0.10
+  max_missing_face_ratio: 0.0

@@ -30,6 +30,7 @@ class VideoSample:
     split: str
     dataset_id: str = "vcf"
     media_type: str = ""
+    split_locked: bool = False
 
     def to_dict(self):
         return asdict(self)

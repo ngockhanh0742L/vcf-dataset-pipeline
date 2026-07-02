@@ -166,6 +166,29 @@ class DatasetAdapterTests(unittest.TestCase):
         counts = pd.Series([sample.split for sample in balanced]).value_counts().to_dict()
         self.assertEqual(counts, {"train": 14, "val": 3, "test": 3})
 
+    def test_manifest_explicit_split_is_preserved(self):
+        split = namespace(
+            seed=42,
+            strategy="balanced_hash",
+            train_ratio=0.7,
+            val_ratio=0.15,
+            test_ratio=0.15,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "clip.mp4").write_bytes(b"")
+            manifest = root / "videos.csv"
+            pd.DataFrame(
+                [{"path": "clip.mp4", "label": 1, "group_id": "subject-1", "split": "test"}]
+            ).to_csv(manifest, index=False)
+            source = namespace(
+                id="custom", root=str(root), manifest=str(manifest), strict_layout=True
+            )
+            samples, _ = _discover_manifest(source, split)
+            balanced = _assign_balanced_splits(samples, split)
+            self.assertTrue(balanced[0].split_locked)
+            self.assertEqual(balanced[0].split, "test")
+
 
 class ManifestTests(unittest.TestCase):
     def test_manifest_upsert_preserves_previous_rows(self):

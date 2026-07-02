@@ -77,6 +77,11 @@ def _discover_manifest(source, config_split):
         group_id = f"{source.id}:{raw_group}"
         video_id = _optional_text(row, "video_id") or relative
         class_name = _optional_text(row, "class_name") or ("real" if label == 0 else "fake")
+        explicit_split = _optional_text(row, "split").lower()
+        if explicit_split and explicit_split not in {"train", "val", "test"}:
+            raise ValueError(
+                f"Dataset '{source.id}' row {row_index} has invalid split {explicit_split!r}"
+            )
         samples.append(
             VideoSample(
                 path=str(path),
@@ -89,9 +94,10 @@ def _discover_manifest(source, config_split):
                 group_id=group_id,
                 label=label,
                 class_name=class_name,
-                split=assign_split(group_id, config_split),
+                split=explicit_split or assign_split(group_id, config_split),
                 dataset_id=source.id,
                 media_type=_optional_text(row, "media_type"),
+                split_locked=bool(explicit_split),
             )
         )
     if rejected and bool(getattr(source, "strict_layout", True)):
@@ -126,9 +132,27 @@ def _assign_balanced_splits(samples, config_split):
         float(config_split.val_ratio),
         float(config_split.test_ratio),
     )
+    locked_by_dataset = defaultdict(set)
+    for sample in samples:
+        locked_by_dataset[sample.dataset_id].add(sample.split_locked)
+    mixed = [dataset_id for dataset_id, values in locked_by_dataset.items() if len(values) > 1]
+    if mixed:
+        raise ValueError(
+            "A dataset cannot mix explicit and generated splits: " + ", ".join(sorted(mixed))
+        )
+
+    explicit_groups = defaultdict(set)
+    for sample in samples:
+        if sample.split_locked:
+            explicit_groups[(sample.dataset_id, sample.group_id)].add(sample.split)
+    leaking = [key for key, values in explicit_groups.items() if len(values) > 1]
+    if leaking:
+        raise ValueError(f"Explicit manifest splits leak {len(leaking)} group(s)")
+
     groups_by_dataset = defaultdict(set)
     for sample in samples:
-        groups_by_dataset[sample.dataset_id].add(sample.group_id)
+        if not sample.split_locked:
+            groups_by_dataset[sample.dataset_id].add(sample.group_id)
 
     assignments = {}
     split_names = ("train", "val", "test")
@@ -146,7 +170,9 @@ def _assign_balanced_splits(samples, config_split):
                 assignments[(dataset_id, group_id)] = split_name
             offset += count
     return [
-        replace(sample, split=assignments[(sample.dataset_id, sample.group_id)])
+        sample
+        if sample.split_locked
+        else replace(sample, split=assignments[(sample.dataset_id, sample.group_id)])
         for sample in samples
     ]
 

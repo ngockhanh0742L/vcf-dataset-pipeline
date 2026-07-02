@@ -5,6 +5,9 @@ venv/
 .venv/
 data/
 output/
+output_*/
+kaggle-upload/
+drive-shards/
 *.zip
 *.pth
 *.jpg
