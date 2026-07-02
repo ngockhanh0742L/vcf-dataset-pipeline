@@ -1,7 +1,7 @@
 param(
     [string]$Owner = "swannessie",
     [string]$Slug = "ffpp-c23-face-sequences-jpeg95-6seq",
-    [string]$Title = "FaceForensics++ C23 Face Sequences - JPEG95 6 Sequences",
+    [string]$Title = "FF++ C23 Face Sequences JPEG95",
     [switch]$Public,
     [switch]$Version,
     [string]$VersionNotes = "Refresh FaceForensics++ C23 preprocessed JPEG95 sequence archive.",
